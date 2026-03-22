@@ -148,8 +148,13 @@ export async function sendImage(
   targetId: number,
   filePath: string,
 ): Promise<OneBotApiResponse> {
+  // Support both URLs (http/https) and local file paths (file:// or absolute)
+  let fileRef = filePath;
+  if (!filePath.startsWith("http://") && !filePath.startsWith("https://") && !filePath.startsWith("file://")) {
+    fileRef = `file://${filePath}`;
+  }
   const message: OneBotMessageSegment[] = [
-    { type: "image", data: { file: filePath.startsWith("file://") ? filePath : `file://${filePath}` } },
+    { type: "image", data: { file: fileRef } },
   ];
 
   const endpoint = targetType === "private" ? "send_private_msg" : "send_group_msg";

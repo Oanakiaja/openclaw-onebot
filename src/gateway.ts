@@ -507,7 +507,7 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
                 if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
 
                 log?.info(
-                  `[onebot:${account.accountId}] deliver(${info.kind}): textLen=${payload.text?.length ?? 0}`,
+                  `[onebot:${account.accountId}] deliver(${info.kind}): textLen=${payload.text?.length ?? 0} mediaUrl=${payload.mediaUrl ?? "none"} mediaUrls=${JSON.stringify(payload.mediaUrls ?? [])} keys=${Object.keys(payload).join(",")}`,
                 );
 
                 let replyText = payload.text ?? "";
@@ -599,12 +599,59 @@ export async function startGateway(ctx: GatewayContext): Promise<void> {
         // Skip own messages
         if (event.user_id === event.self_id) return;
 
-        log?.info(
-          `[onebot:${account.accountId}] ${isGroup ? "Group" : "Private"} message from ${senderName}(${senderId}) msg=${event.message_id}: ${text.slice(0, 100)}`,
+        // Group @bot filter with time-based random reply mode
+        // Random mode hours: 12:00-14:00 (lunch), 19:00-03:00 (evening/night)
+        // Normal mode hours: 03:00-12:00, 14:00-19:00 (only reply when @'d)
+        const isBotMentioned = isGroup && event.message.some(
+          (seg) => seg.type === "at" && String(seg.data.qq) === String(event.self_id),
         );
 
-        if (isGroup && account.groupAutoReact) {
-          void reactToMessage(account, event.message_id, account.groupAutoReactEmojiId)
+        const currentHour = new Date().getHours();
+        const isRandomMode = (currentHour >= 12 && currentHour < 14)
+          || (currentHour >= 19)
+          || (currentHour < 3);
+
+        // Decide whether to reply in group chat
+        let shouldDispatch = true;
+        let dispatchReason = "private";
+
+        if (isGroup) {
+          if (isBotMentioned) {
+            dispatchReason = "@bot";
+          } else if (!isRandomMode) {
+            // Normal mode: skip non-@ messages
+            log?.debug?.(
+              `[onebot:${account.accountId}] [normal-mode] Group message from ${senderName} without @bot, skipping`,
+            );
+            shouldDispatch = false;
+          } else {
+            // Random mode: 30% chance to reply
+            const roll = Math.random();
+            if (roll < 0.3) {
+              dispatchReason = "random";
+              log?.info(
+                `[onebot:${account.accountId}] [random-mode] Group message from ${senderName}, dice roll: reply!`,
+              );
+            } else {
+              log?.debug?.(
+                `[onebot:${account.accountId}] [random-mode] Group message from ${senderName}, dice roll: skip`,
+              );
+              shouldDispatch = false;
+            }
+          }
+        }
+
+        if (!shouldDispatch) return;
+
+        log?.info(
+          `[onebot:${account.accountId}] ${isGroup ? `Group(${dispatchReason})` : "Private"} message from ${senderName}(${senderId}) msg=${event.message_id}: ${text.slice(0, 100)}`,
+        );
+
+        // React with random emoji when bot is about to reply in group
+        const REACTION_EMOJI_POOL = [76, 66, 179, 182, 264, 319, 277, 271, 281, 290, 318, 315, 124, 21, 299];
+        if (isGroup) {
+          const randomEmojiId = REACTION_EMOJI_POOL[Math.floor(Math.random() * REACTION_EMOJI_POOL.length)];
+          void reactToMessage(account, event.message_id, randomEmojiId)
             .then((result) => {
               if (!result.ok) {
                 log?.error(
